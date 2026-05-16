@@ -1,0 +1,19 @@
+[project]
+name = "hugging-hat"
+version = "0.1.0"
+description = "A hugging hat project"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "click>=8.1.7",
+]
+
+[project.scripts]
+hh = "hugging_hat.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+managed = true
