@@ -3,9 +3,24 @@ name = "hugging-hat"
 version = "0.1.0"
 description = "A hugging hat project"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "click>=8.1.7",
+]
+
+[project.optional-dependencies]
+hf = [
+    "transformers>=4.48",
+]
+torch = [
+    "torch>=2.1",
+]
+yaml = [
+    "pyyaml>=6.0.1",
+]
+train = [
+    "accelerate>=0.33",
+    "datasets>=2.20",
 ]
 
 [project.scripts]
