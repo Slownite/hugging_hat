@@ -146,9 +146,26 @@ class HatEnabledModel(nn.Module):
         return cls(base_model, config=config)
 
     def __getattr__(self, name: str) -> Any:
-        if name in {"base_model", "config", "_state", "_hooks"}:
-            return super().__getattribute__(name)
-        return getattr(self.base_model, name)
+        # nn.Module stores submodules/params/buffers (incl. base_model and the
+        # hats) in private dicts resolved via nn.Module.__getattr__, not via
+        # object.__getattribute__. Try that first, then transparently delegate
+        # unknown attributes to the wrapped base model (HF convenience methods).
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            pass
+        base = super().__getattr__("base_model")
+        return getattr(base, name)
+
+    def save_hats(self, path: str) -> None:
+        from .persistence import save_hats
+
+        save_hats(self, path)
+
+    def load_hats(self, path: str) -> None:
+        from .persistence import load_hats
+
+        load_hats(self, path)
 
     def set_steps_override(self, steps: int) -> None:
         self._state.steps_override = int(steps)

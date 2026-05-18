@@ -7,12 +7,16 @@ default:
 # Install dependencies
 install:
     uv venv --python "${UV_PYTHON:-python3}" .venv
-    uv sync --extra hf --extra yaml --extra train
+    uv sync --extra hf --extra yaml --extra train --extra test
     uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu118 "torch==2.2.*" "torchvision==0.17.*" "torchaudio==2.2.*"
 
 # Run the CLI locally
 run *ARGS:
     uv run hh {{ARGS}}
+
+# Run the pytest suite (requires test + torch extras installed)
+test *ARGS:
+    .venv/bin/pytest {{ARGS}}
 
 # Run local smoke test (requires torch extra installed)
 smoke:
