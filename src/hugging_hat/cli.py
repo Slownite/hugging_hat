@@ -9,11 +9,6 @@ def cli():
     pass
 
 @cli.command()
-def hello():
-    """Say hello."""
-    click.echo("Hello from hugging-hat!")
-
-@cli.command()
 @click.argument("model_name_or_path", type=str)
 @click.option("--config-yaml", type=click.Path(exists=True, dir_okay=False), default=None)
 @click.option("--local-files-only/--download", default=True, show_default=True)

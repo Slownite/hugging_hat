@@ -47,6 +47,12 @@ Add configurable **test-time compute** to a frozen decoder-only causal LM by ins
 
 Configuration is config-first via dataclasses in `src/hugging_hat/config.py`, with optional YAML IO (`pip install hugging-hat[yaml]`).
 
+## Persistence
+
+Hats are saved/loaded **hat-only** (never the base checkpoint). The on-disk
+format, metadata fields, and compatibility rules are specified in
+[hat-checkpoint-format.md](hat-checkpoint-format.md).
+
 ## Training (staged)
 
 1) Train **Thinker** at fixed steps (e.g. 4) with next-token CE on synthetic coding tasks.

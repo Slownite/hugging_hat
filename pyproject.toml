@@ -14,6 +14,10 @@ hf = [
 ]
 torch = [
     "torch>=2.1",
+    "safetensors>=0.4",
+    # torch cu118 wheels (2.2.x) are built against the NumPy 1.x ABI; NumPy 2
+    # triggers an import-time ABI crash. Constrain until torch is upgraded.
+    "numpy<2",
 ]
 yaml = [
     "pyyaml>=6.0.1",
@@ -22,6 +26,9 @@ train = [
     "accelerate>=0.33",
     "datasets>=2.20",
     "tqdm>=4.66",
+]
+test = [
+    "pytest>=8.0",
 ]
 
 [project.scripts]
@@ -33,3 +40,7 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 managed = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

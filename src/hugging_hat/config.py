@@ -60,9 +60,16 @@ def _require_yaml() -> Any:
     return yaml
 
 
+def _coerce_step_set(d: dict[str, Any]) -> dict[str, Any]:
+    # JSON/YAML round-trips tuples as lists; step_set is declared as a tuple.
+    if "step_set" in d and d["step_set"] is not None:
+        d = {**d, "step_set": tuple(d["step_set"])}
+    return d
+
+
 def hat_config_from_dict(data: dict[str, Any]) -> HatConfig:
-    router = LatentRouterHatConfig(**data.get("router", {}))
-    thinker = ThinkerHatConfig(**data.get("thinker", {}))
+    router = LatentRouterHatConfig(**_coerce_step_set(data.get("router", {})))
+    thinker = ThinkerHatConfig(**_coerce_step_set(data.get("thinker", {})))
     critic = CrossAttentiveCriticHatConfig(**data.get("critic", {}))
     return HatConfig(layers_path=data.get("layers_path"), router=router, thinker=thinker, critic=critic)
 
