@@ -55,6 +55,9 @@ format, metadata fields, and compatibility rules are specified in
 
 ## Training (staged)
 
+The v0 training surface (Thinker-first) is specified in
+[training-api-v0.md](training-api-v0.md).
+
 1) Train **Thinker** at fixed steps (e.g. 4) with next-token CE on synthetic coding tasks.
 2) Train **Router** using a teacher sweep over `{0,2,4,8}`: label each example with the step count that minimizes CE loss on the reference continuation.
 3) Train **Critic** last (optional), with care to avoid suppressing useful creativity; keep opt-in by default.
