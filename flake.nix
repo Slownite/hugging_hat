@@ -19,7 +19,7 @@
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              python312
+              python313
               uv
               just
             ];
@@ -27,7 +27,9 @@
             shellHook = ''
               export UV_PROJECT_ENVIRONMENT=.venv
               # Ensures uv uses the python from nixpkgs
-              export UV_PYTHON=${pkgs.python312}/bin/python
+              export UV_PYTHON=${pkgs.python313}/bin/python
+              # Put the project venv's bin on PATH so installed scripts (e.g. `hh`) are available
+              export PATH="$PWD/.venv/bin:$PATH"
             '';
           };
         });

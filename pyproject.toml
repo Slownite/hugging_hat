@@ -3,28 +3,27 @@ name = "hugging-hat"
 version = "0.1.0"
 description = "A hugging hat project"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "click>=8.1.7",
 ]
 
 [project.optional-dependencies]
 hf = [
-    "transformers>=4.48",
+    "transformers>=5.9",
 ]
 torch = [
-    "torch>=2.1",
-    "safetensors>=0.4",
-    # torch cu118 wheels (2.2.x) are built against the NumPy 1.x ABI; NumPy 2
-    # triggers an import-time ABI crash. Constrain until torch is upgraded.
-    "numpy<2",
+    "torch>=2.7",
+    "torchvision>=0.22",
+    "torchaudio>=2.7",
+    "safetensors>=0.7",
 ]
 yaml = [
     "pyyaml>=6.0.1",
 ]
 train = [
-    "accelerate>=0.33",
-    "datasets>=2.20",
+    "accelerate>=1.13",
+    "datasets>=4.8",
     "tqdm>=4.66",
 ]
 test = [
@@ -40,6 +39,16 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 managed = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

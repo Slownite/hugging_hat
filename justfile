@@ -5,10 +5,13 @@ default:
     @just --list
 
 # Install dependencies
-install:
+install_deps:
     uv venv --python "${UV_PYTHON:-python3}" .venv
-    uv sync --extra hf --extra yaml --extra train --extra test
-    uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu118 "torch==2.2.*" "torchvision==0.17.*" "torchaudio==2.2.*"
+    uv sync --extra hf --extra yaml --extra train --extra test --extra torch
+
+# Install package
+install:
+    uv pip install --python .venv/bin/python -e .
 
 # Run the CLI locally
 run *ARGS:
