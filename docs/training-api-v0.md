@@ -112,6 +112,80 @@ def set_seed(seed: int | None) -> None: ...  # #10
   whether optimizer/scheduler state is also persisted is the open decision in
   #11.
 
+## Batching
+
+v0 uses **dynamic per-batch padding** (option A in #7). Each batch is padded to
+the longest sequence *in that batch*; nothing is packed across examples and no
+batch is padded all the way to `max_length`.
+
+### Decision summary
+
+| Aspect | v0 choice |
+|---|---|
+| Strategy | Dynamic padding per batch (no packing) |
+| Truncation | Stays in `tokenizer.preprocess_record`; `collate` never re-truncates |
+| Padding side | Right (HF causal-LM convention) |
+| `pad_token_id` fallback | If `tokenizer.pad_token_id is None`, fall back to `tokenizer.eos_token_id` and emit a one-time `warnings.warn` |
+| Pad value — `input_ids` | `pad_token_id` |
+| Pad value — `attention_mask` | `0` |
+| Pad value — `labels` | `-100` (`IGNORE_INDEX`) so padded positions never contribute to loss |
+| Output dtype | `torch.long` for all three tensors |
+
+Rationale: option A is the minimum viable choice that respects the 1080 Ti OOM
+story (PRD story 11) without wasting compute on uniformly `max_length`-padded
+batches, and it composes cleanly with the per-record truncation the preprocessor
+already does. Options B and C are explicitly deferred (see "Out of scope"
+below).
+
+### `collate` contract
+
+```python
+def collate(
+    batch: list[dict[str, list[int]]],
+    pad_token_id: int,
+) -> dict[str, torch.Tensor]: ...
+```
+
+- **Input.** A non-empty list of preprocessed records as emitted by
+  `tokenizer.preprocess_record` — each a dict with keys `input_ids`,
+  `attention_mask`, `labels` whose values are `list[int]` of the same length
+  *within* a record but variable length *across* records. Records are assumed
+  already truncated to `max_length`; `collate` does not verify this and does
+  not re-truncate.
+- **Output.** A dict with the same three keys, each a `torch.Tensor` of shape
+  `(B, T)` and dtype `torch.long`, where `B = len(batch)` and `T` is the max
+  per-record length in this batch. Right-padded with the pad values in the
+  table above.
+- **`pad_token_id`.** Required positional argument. Callers (training loop,
+  CLI) are responsible for resolving the fallback to `eos_token_id` and
+  emitting the warning before constructing the dataloader; `collate` itself
+  trusts the value it receives. This keeps `collate` free of tokenizer state.
+- **No device move.** `collate` returns CPU tensors. Device placement is #9's
+  responsibility.
+
+### Surface impact
+
+- **Python API.** `TrainConfig.batch_size` is the dataloader batch size; it
+  controls `B` directly. `TrainConfig.max_length` is passed through to the
+  preprocessor (the per-record truncation cap) and is *not* enforced again by
+  `collate`. The loop wires `collate` into the `DataLoader` via
+  `functools.partial(collate, pad_token_id=resolved_pad_id)`.
+- **CLI (`hh train-thinker`).** `--batch-size` and `--max-length` map 1:1 onto
+  the `TrainConfig` fields above. If the tokenizer has no pad token, the CLI
+  prints a single warning naming the fallback (`eos_token_id`) so users see it
+  even when Python warnings are silenced.
+
+### Out of scope for v0 (deferred)
+
+- **Option B — fixed-length padding to `max_length`.** Not adopted; would waste
+  compute on ragged batches. Revisit only if a real OOM repro shows option A's
+  variable-length batches blow memory budgets on a 1080 Ti.
+- **Option C — example packing.** Not adopted; the cross-example attention
+  masking and label-segmenting it requires is disproportionate for v0 throughput
+  needs. Revisit once the loop is stable and a throughput target exists.
+- **Left padding.** Not adopted for training. (Generation-time left padding is a
+  separate concern and not in scope here.)
+
 ## Sequencing
 
 ```
