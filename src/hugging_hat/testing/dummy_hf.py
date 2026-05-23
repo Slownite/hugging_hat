@@ -5,6 +5,7 @@ from typing import Any
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 
 @dataclass
@@ -54,13 +55,25 @@ class DummyCausalLM(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         past_key_values: Any | None = None,
+        labels: torch.Tensor | None = None,
         **_kwargs: Any,
     ) -> dict[str, torch.Tensor]:
         hidden_states = self.embed(input_ids)
         for layer in self.model.layers:
             hidden_states = layer(hidden_states)
         logits = self.lm_head(hidden_states)
-        return {"logits": logits, "hidden_states": hidden_states}
+        out: dict[str, torch.Tensor] = {"logits": logits, "hidden_states": hidden_states}
+        if labels is not None:
+            # Match HF causal-LM CE: shift so logits[..., t, :] predicts labels[..., t+1],
+            # with ignore_index=-100. Returns nan when no valid positions remain.
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            out["loss"] = F.cross_entropy(
+                shift_logits.view(-1, shift_logits.size(-1)),
+                shift_labels.view(-1),
+                ignore_index=-100,
+            )
+        return out
 
     @torch.no_grad()
     def generate(
