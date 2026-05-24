@@ -52,3 +52,37 @@ def load_jsonl(path: str) -> Iterator[PromptCompletion]:
                         f"{name}:{lineno} - {key!r} must be a non-empty string"
                     )
             yield PromptCompletion(prompt=obj["prompt"], completion=obj["completion"])
+
+
+def load_hf_dataset(
+    dataset: str,
+    *,
+    split: str,
+    config: str | None = None,
+    prompt_field: str = "prompt",
+    completion_field: str = "completion",
+    streaming: bool = False,
+) -> Iterator[PromptCompletion]:
+    import datasets as _hf  # local import — train extra
+
+    ds = _hf.load_dataset(dataset, name=config, split=split, streaming=streaming)
+    label = f"{dataset}[{config}]:{split}" if config else f"{dataset}:{split}"
+    for row in ds:
+        for key in (prompt_field, completion_field):
+            if key not in row:
+                raise InvalidDatasetError(
+                    f"{label} - missing required column {key!r}"
+                )
+            value = row[key]
+            if not isinstance(value, str):
+                raise InvalidDatasetError(
+                    f"{label} - column {key!r} must be a string, "
+                    f"got {type(value).__name__}"
+                )
+            if not value:
+                raise InvalidDatasetError(
+                    f"{label} - column {key!r} must be a non-empty string"
+                )
+        yield PromptCompletion(
+            prompt=row[prompt_field], completion=row[completion_field]
+        )
