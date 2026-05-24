@@ -20,7 +20,7 @@ re-implement them.
 | Hook wiring, frozen base forward, `save_hats`/`load_hats` | `HatEnabledModel` | done (#2–#4) |
 | JSONL → `PromptCompletion` records | `data.load_jsonl` | done (#5) |
 | `PromptCompletion` → `{input_ids, attention_mask, labels}` | `tokenizer.preprocess_record` | done (#6) |
-| HF dataset → `PromptCompletion` records | `data` (new adapter) | #13 |
+| HF dataset → `PromptCompletion` records | `data.load_hf_dataset` | done (#13) |
 | Collate a batch of preprocessed records into padded tensors | `train.collate` | #7 |
 | One forward/backward/step on hats only | `train.training_step` | #8 |
 | Device + dtype/autocast policy | `train.device` | #9 |
@@ -185,6 +185,72 @@ def collate(
   needs. Revisit once the loop is stable and a throughput target exists.
 - **Left padding.** Not adopted for training. (Generation-time left padding is a
   separate concern and not in scope here.)
+
+## Datasets — Hugging Face adapter
+
+v0 ships **one** way to consume a Hugging Face `datasets` source: two explicit
+columns — one for the prompt, one for the completion — that map 1:1 onto
+`PromptCompletion`. The adapter (`data.load_hf_dataset`) yields the same record
+type as `load_jsonl`, so everything downstream (`preprocess_record`, `collate`,
+the training loop) is unchanged. PRD stories 2, 24, 25.
+
+### Decision summary
+
+| Aspect | v0 choice |
+|---|---|
+| Schema shape | Option A — two columns: `prompt_field` + `completion_field` |
+| Required arguments | `dataset` (positional, name or path), `--split` |
+| Optional arguments | `--config` (HF dataset config name), `--prompt-field` (default `prompt`), `--completion-field` (default `completion`), `--streaming` (default `False`) |
+| Validation | Fails fast — first malformed row raises `InvalidDatasetError` |
+| Error message format | `{dataset}[{config}]:{split} - <reason>` (`[config]` omitted when `None`) |
+| Error wording | "missing required column `X`" / "column `X` must be a string, got `T`" / "column `X` must be a non-empty string" |
+| Network in CI | Never — tests monkeypatch `datasets.load_dataset` to return in-memory `Dataset` / `IterableDataset` |
+
+### Surface
+
+```python
+def load_hf_dataset(
+    dataset: str,
+    *,
+    split: str,
+    config: str | None = None,
+    prompt_field: str = "prompt",
+    completion_field: str = "completion",
+    streaming: bool = False,
+) -> Iterator[PromptCompletion]: ...
+```
+
+### Supported v0 schemas
+
+- Any HF dataset (in-memory, on-disk, or hub-hosted) whose chosen split
+  exposes two columns of Python `str` values — the prompt column and the
+  completion column. Column names default to `prompt` / `completion` but can be
+  overridden with `prompt_field` / `completion_field`.
+- Extra columns on the row are ignored.
+- Works for both regular (`Dataset`) and streaming (`IterableDataset`) sources;
+  the adapter never assumes random access or known length.
+
+### Error behavior
+
+Mirrors `load_jsonl`: the first row that fails validation aborts iteration
+with `InvalidDatasetError`. The message names the dataset + split (and config
+if given) plus the offending column and reason. Specifically:
+
+- Missing column → `... - missing required column 'completion'`
+- Non-string value → `... - column 'completion' must be a string, got int`
+- Empty string → `... - column 'completion' must be a non-empty string`
+
+### Out of scope for v0 (deferred)
+
+- **Option B — single text field + delimiter/template.** Useful for chat or
+  instruction datasets that ship the whole example in one column. Deferred
+  pending a concrete consumer; revisit alongside HF chat-template support.
+- **Authenticated / private datasets.** No token plumbing in the v0 adapter.
+  Users who need auth can run `huggingface-cli login` out-of-band; the
+  adapter just forwards `dataset` / `config` / `split` / `streaming` to
+  `datasets.load_dataset`.
+- **Multi-split iteration in one call.** v0 takes exactly one `--split`. Loop
+  over splits at the call site if needed.
 
 ## Resume
 
