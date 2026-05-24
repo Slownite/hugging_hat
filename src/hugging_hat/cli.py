@@ -41,7 +41,12 @@ def doctor(model_name_or_path: str, config_yaml: str | None, local_files_only: b
 
 @cli.command(name="train-thinker")
 @click.argument("model_name_or_path", type=str)
-@click.option("--data", "data_path", type=click.Path(exists=True, dir_okay=False), required=True)
+@click.option("--data", "data_path", type=click.Path(exists=True, dir_okay=False), default=None)
+@click.option("--dataset", type=str, default=None)
+@click.option("--split", type=str, default=None)
+@click.option("--dataset-config", type=str, default=None)
+@click.option("--prompt-field", type=str, default="prompt", show_default=True)
+@click.option("--completion-field", type=str, default="completion", show_default=True)
 @click.option("--output-dir", "output_dir", type=click.Path(file_okay=False), required=True)
 @click.option("--thinker-steps", type=int, default=4, show_default=True)
 @click.option("--max-length", type=int, default=1024, show_default=True)
@@ -60,7 +65,12 @@ def doctor(model_name_or_path: str, config_yaml: str | None, local_files_only: b
 @click.option("--resume-from", type=click.Path(exists=True, file_okay=False), default=None)
 def train_thinker_cmd(
     model_name_or_path: str,
-    data_path: str,
+    data_path: str | None,
+    dataset: str | None,
+    split: str | None,
+    dataset_config: str | None,
+    prompt_field: str,
+    completion_field: str,
     output_dir: str,
     thinker_steps: int,
     max_length: int,
@@ -78,7 +88,14 @@ def train_thinker_cmd(
     local_files_only: bool,
     resume_from: str | None,
 ) -> None:
-    """Train the Thinker Hat end-to-end from a JSONL prompt/completion file."""
+    """Train the Thinker Hat end-to-end from a JSONL file or HF dataset."""
+    if bool(data_path) == bool(dataset):
+        raise click.UsageError(
+            "exactly one of --data or --dataset is required"
+        )
+    if dataset and not split:
+        raise click.UsageError("--split is required when using --dataset")
+
     try:
         from .model import HatEnabledModel
     except ModuleNotFoundError as e:
@@ -88,7 +105,7 @@ def train_thinker_cmd(
     except ModuleNotFoundError as e:
         raise click.ClickException(str(e)) from e
 
-    from .data import load_jsonl
+    from .data import load_hf_dataset, load_jsonl
     from .train import TrainConfig, train_thinker
 
     if config_yaml is not None:
@@ -135,7 +152,18 @@ def train_thinker_cmd(
         resume_from=resume_from,
     )
 
-    records = list(load_jsonl(data_path))
+    if dataset:
+        records = list(
+            load_hf_dataset(
+                dataset,
+                split=split,
+                config=dataset_config,
+                prompt_field=prompt_field,
+                completion_field=completion_field,
+            )
+        )
+    else:
+        records = list(load_jsonl(data_path))
     train_thinker(model, records, tokenizer, train_config, output_dir=output_dir)
 
 
