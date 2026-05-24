@@ -49,6 +49,11 @@ def training_step(
     """
     del thinker_steps  # set by the loop, not by us
 
+    labels = batch.get("labels")
+    num_tokens = (
+        int((labels != -100).sum().item()) if labels is not None else 0
+    )
+
     model.train()
     if autocast_device_type is not None:
         autocast_ctx: contextlib.AbstractContextManager = torch.autocast(
@@ -62,7 +67,7 @@ def training_step(
         loss = _extract_loss(outputs)
 
     if not torch.isfinite(loss):
-        return StepMetrics(step=step_index, loss=0.0)
+        return StepMetrics(step=step_index, loss=0.0, num_tokens=0)
 
     if scaler is not None:
         scaler.scale(loss).backward()
@@ -78,4 +83,8 @@ def training_step(
         optimizer.step()
 
     optimizer.zero_grad(set_to_none=True)
-    return StepMetrics(step=step_index, loss=float(loss.detach().item()))
+    return StepMetrics(
+        step=step_index,
+        loss=float(loss.detach().item()),
+        num_tokens=num_tokens,
+    )
