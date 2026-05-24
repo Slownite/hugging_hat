@@ -266,6 +266,7 @@ def test_train_thinker_loss_decreases_and_writes_checkpoint(tmp_path):
         thinker_steps=4,
         log_every=0,  # silence prints
         save_every=None,
+        device="cpu",
     )
     result = train_thinker(
         model, records, tokenizer, config, output_dir=str(out_dir),
@@ -291,6 +292,7 @@ def test_train_thinker_checkpoint_round_trips_via_load_hats(tmp_path):
         TrainConfig(
             max_length=32, batch_size=2, lr=1e-2,
             num_epochs=3, thinker_steps=2, log_every=0,
+            device="cpu",
         ),
         output_dir=str(out_dir),
     )

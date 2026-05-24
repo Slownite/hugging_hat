@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import warnings
 from collections.abc import Iterable
 from typing import Any
@@ -13,6 +14,12 @@ from hugging_hat.tokenizer import preprocess_record
 
 from .collate import collate
 from .config import StepMetrics, TrainConfig, TrainResult
+from .device import (
+    PrecisionPolicy,
+    move_batch_to_device,
+    resolve_device,
+    resolve_precision,
+)
 from .freeze import freeze_base_enable_hats
 from .step import training_step
 
@@ -75,6 +82,10 @@ def train_thinker(
     if config.resume_from is not None:
         model.load_hats(config.resume_from)
 
+    device = resolve_device(config.device)
+    model.to(device)
+    precision = resolve_precision(config.precision, device)
+
     hat_params = freeze_base_enable_hats(model)
     optimizer = AdamW(hat_params, lr=config.lr, weight_decay=config.weight_decay)
     pad_token_id = _resolve_pad_token_id(tokenizer)
@@ -98,11 +109,15 @@ def train_thinker(
                 batch_size=config.batch_size,
                 pad_token_id=pad_token_id,
             ):
+                batch = move_batch_to_device(batch, device)
                 if config.grad_accum_steps == 1:
                     metrics = training_step(
                         model,
                         batch,
                         optimizer,
+                        scaler=precision.scaler,
+                        autocast_device_type=precision.autocast_device_type,
+                        autocast_dtype=precision.autocast_dtype,
                         thinker_steps=config.thinker_steps,
                         grad_clip=config.grad_clip,
                         step_index=optim_step,
@@ -116,6 +131,7 @@ def train_thinker(
                         accum_count=accum_count,
                         grad_accum_steps=config.grad_accum_steps,
                         grad_clip=config.grad_clip,
+                        precision=precision,
                     )
                     accum_loss_sum += metrics.loss
                     accum_count += 1
@@ -151,6 +167,7 @@ def _accumulate_microbatch(
     accum_count: int,
     grad_accum_steps: int,
     grad_clip: float | None,
+    precision: PrecisionPolicy,
 ) -> StepMetrics:
     """One micro-step of gradient accumulation.
 
@@ -159,21 +176,42 @@ def _accumulate_microbatch(
     clip, and zero_grad happen.
     """
     model.train()
-    outputs = model(**batch)
-    if hasattr(outputs, "loss") and outputs.loss is not None:
-        loss = outputs.loss
-    elif isinstance(outputs, dict) and outputs.get("loss") is not None:
-        loss = outputs["loss"]
+    if precision.autocast_device_type is not None:
+        autocast_ctx: contextlib.AbstractContextManager = torch.autocast(
+            device_type=precision.autocast_device_type,
+            dtype=precision.autocast_dtype,
+        )
     else:
-        raise RuntimeError("Model forward did not return a 'loss'.")
+        autocast_ctx = contextlib.nullcontext()
+
+    with autocast_ctx:
+        outputs = model(**batch)
+        if hasattr(outputs, "loss") and outputs.loss is not None:
+            loss = outputs.loss
+        elif isinstance(outputs, dict) and outputs.get("loss") is not None:
+            loss = outputs["loss"]
+        else:
+            raise RuntimeError("Model forward did not return a 'loss'.")
 
     is_boundary = accum_count == grad_accum_steps - 1
+    scaler = precision.scaler
     if torch.isfinite(loss):
-        (loss / grad_accum_steps).backward()
+        scaled = loss / grad_accum_steps
+        if scaler is not None:
+            scaler.scale(scaled).backward()
+        else:
+            scaled.backward()
     if is_boundary:
-        if grad_clip is not None:
-            torch.nn.utils.clip_grad_norm_(hat_params, grad_clip)
-        optimizer.step()
+        if scaler is not None:
+            if grad_clip is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(hat_params, grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            if grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(hat_params, grad_clip)
+            optimizer.step()
         optimizer.zero_grad(set_to_none=True)
     loss_value = float(loss.detach().item()) if torch.isfinite(loss) else 0.0
     return StepMetrics(step=accum_count, loss=loss_value)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import torch
@@ -25,6 +26,8 @@ def training_step(
     optimizer: torch.optim.Optimizer,
     *,
     scaler: torch.amp.GradScaler | None = None,
+    autocast_device_type: str | None = None,
+    autocast_dtype: torch.dtype | None = None,
     thinker_steps: int,
     grad_clip: float | None = None,
     step_index: int = 0,
@@ -39,12 +42,24 @@ def training_step(
     If the batch has no valid (non-ignored) target positions the loss is non-
     finite; we skip the backward/step and return loss=0.0. This keeps the
     "all-(-100) batch → no gradient to hats" contract from issue #8.
+
+    When ``autocast_device_type`` is set the forward runs inside
+    ``torch.autocast(autocast_device_type, dtype=autocast_dtype)``; pair this
+    with a cuda ``GradScaler`` for fp16 (issue #9, ``resolve_precision``).
     """
     del thinker_steps  # set by the loop, not by us
 
     model.train()
-    outputs = model(**batch)
-    loss = _extract_loss(outputs)
+    if autocast_device_type is not None:
+        autocast_ctx: contextlib.AbstractContextManager = torch.autocast(
+            device_type=autocast_device_type, dtype=autocast_dtype
+        )
+    else:
+        autocast_ctx = contextlib.nullcontext()
+
+    with autocast_ctx:
+        outputs = model(**batch)
+        loss = _extract_loss(outputs)
 
     if not torch.isfinite(loss):
         return StepMetrics(step=step_index, loss=0.0)
