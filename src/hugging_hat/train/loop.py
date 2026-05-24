@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import time
 import warnings
 from collections.abc import Iterable
 from typing import Any
@@ -21,6 +22,7 @@ from .device import (
     resolve_precision,
 )
 from .freeze import freeze_base_enable_hats
+from .seed import set_seed
 from .step import training_step
 
 
@@ -60,15 +62,6 @@ def _iter_batches(
         yield collate(buffer, pad_token_id=pad_token_id)
 
 
-def _set_seed(seed: int | None) -> None:
-    # Minimal v0 placeholder; full implementation lands with issue #10.
-    if seed is None:
-        return
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
 def train_thinker(
     model: HatEnabledModel,
     records: Iterable[PromptCompletion],
@@ -77,7 +70,7 @@ def train_thinker(
     *,
     output_dir: str,
 ) -> TrainResult:
-    _set_seed(config.seed)
+    set_seed(config.seed)
 
     if config.resume_from is not None:
         model.load_hats(config.resume_from)
@@ -101,6 +94,7 @@ def train_thinker(
                 break
 
             accum_loss_sum = 0.0
+            accum_tokens = 0
             accum_count = 0
             for batch in _iter_batches(
                 records_list,
@@ -110,6 +104,7 @@ def train_thinker(
                 pad_token_id=pad_token_id,
             ):
                 batch = move_batch_to_device(batch, device)
+                step_start = time.perf_counter()
                 if config.grad_accum_steps == 1:
                     metrics = training_step(
                         model,
@@ -124,6 +119,7 @@ def train_thinker(
                         hat_params=hat_params,
                     )
                     last_loss = metrics.loss
+                    step_tokens = metrics.num_tokens
                     optim_step += 1
                 else:
                     metrics = _accumulate_microbatch(
@@ -134,17 +130,27 @@ def train_thinker(
                         precision=precision,
                     )
                     accum_loss_sum += metrics.loss
+                    accum_tokens += metrics.num_tokens
                     accum_count += 1
                     if accum_count == config.grad_accum_steps:
                         last_loss = accum_loss_sum / accum_count
+                        step_tokens = accum_tokens
                         accum_loss_sum = 0.0
+                        accum_tokens = 0
                         accum_count = 0
                         optim_step += 1
                     else:
                         continue  # don't tick step / log / save mid-accumulation
 
+                step_elapsed = max(time.perf_counter() - step_start, 1e-9)
+                tokens_per_sec = step_tokens / step_elapsed
+
                 if config.log_every > 0 and optim_step % config.log_every == 0:
-                    print(f"[train_thinker] epoch={epoch} step={optim_step} loss={last_loss:.4f}")
+                    print(
+                        f"[train_thinker] epoch={epoch} step={optim_step} "
+                        f"loss={last_loss:.4f} tokens/sec={tokens_per_sec:.2f} "
+                        f"thinker_steps={config.thinker_steps}"
+                    )
 
                 if config.save_every is not None and optim_step % config.save_every == 0:
                     model.save_hats(output_dir)
@@ -176,6 +182,10 @@ def _accumulate_microbatch(
     clip, and zero_grad happen.
     """
     model.train()
+    labels = batch.get("labels")
+    num_tokens = (
+        int((labels != -100).sum().item()) if labels is not None else 0
+    )
     if precision.autocast_device_type is not None:
         autocast_ctx: contextlib.AbstractContextManager = torch.autocast(
             device_type=precision.autocast_device_type,
@@ -213,5 +223,10 @@ def _accumulate_microbatch(
                 torch.nn.utils.clip_grad_norm_(hat_params, grad_clip)
             optimizer.step()
         optimizer.zero_grad(set_to_none=True)
-    loss_value = float(loss.detach().item()) if torch.isfinite(loss) else 0.0
-    return StepMetrics(step=accum_count, loss=loss_value)
+    is_finite = bool(torch.isfinite(loss).item())
+    loss_value = float(loss.detach().item()) if is_finite else 0.0
+    return StepMetrics(
+        step=accum_count,
+        loss=loss_value,
+        num_tokens=num_tokens if is_finite else 0,
+    )

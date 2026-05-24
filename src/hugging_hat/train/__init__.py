@@ -15,6 +15,7 @@ from .device import (
 )
 from .freeze import freeze_base_enable_hats
 from .loop import train_thinker
+from .seed import set_seed
 from .step import training_step
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "move_batch_to_device",
     "resolve_device",
     "resolve_precision",
+    "set_seed",
     "train_thinker",
     "training_step",
 ]

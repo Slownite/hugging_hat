@@ -33,6 +33,7 @@ class TrainConfig:
 class StepMetrics:
     step: int
     loss: float
+    num_tokens: int = 0
 
 
 @dataclass
