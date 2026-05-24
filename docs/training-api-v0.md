@@ -62,7 +62,7 @@ class TrainConfig:
     log_every: int = 10                  # optimizer steps; #10
     # checkpointing
     save_every: int | None = None        # steps; None -> only at end
-    resume_from: str | None = None       # path to a hat checkpoint dir; #11
+    resume_from: str | None = None       # path to a hat checkpoint dir; #11 (Option A: weights only)
 
 
 @dataclass
@@ -109,8 +109,8 @@ def set_seed(seed: int | None) -> None: ...  # #10
   re-implement CE.
 - **Hat-only checkpoints.** Saving uses `model.save_hats(output_dir)`. The base
   checkpoint is never written. Resume reads hats via `model.load_hats(...)`;
-  whether optimizer/scheduler state is also persisted is the open decision in
-  #11.
+  optimizer/scheduler/step-counter state is **not** persisted — see the
+  [Resume](#resume) section for the rationale (#11).
 
 ## Batching
 
@@ -185,6 +185,53 @@ def collate(
   needs. Revisit once the loop is stable and a throughput target exists.
 - **Left padding.** Not adopted for training. (Generation-time left padding is a
   separate concern and not in scope here.)
+
+## Resume
+
+v0 adopts **option A: hat-weights-only resume** (#11). `TrainConfig.resume_from`
+points at a hat checkpoint directory; the loop calls `model.load_hats(path)`
+before constructing the optimizer and continues with a **fresh optimizer,
+scheduler, and step counter**. No sibling artifact is written.
+
+### Decision summary
+
+| Aspect | v0 choice |
+|---|---|
+| What is persisted for resume | Hat weights only (the existing `save_hats` artifact) |
+| Optimizer state (Adam moments) | **Not** restored — intentionally reset |
+| LR-scheduler state | **Not** restored — intentionally reset |
+| Global step counter | **Not** restored — `TrainResult.steps` counts only the resumed run |
+| RNG state | **Not** restored — `TrainConfig.seed` reseeds the run |
+| Resume artifact location | N/A — no extra artifact for v0 |
+| Resume artifact format | N/A |
+| Invalid `resume_from` | Surfaces `persistence.InvalidHatCheckpointError` (or `IncompatibleHatCheckpointError` on shape/config mismatch) before training starts |
+
+### Tradeoffs
+
+- **Reproducibility.** The first few post-resume steps will not match an
+  uninterrupted run: Adam's first/second moments and the LR-schedule position
+  are gone. This is the deliberate cost of option A. Loss curves typically
+  converge again within a small number of steps on overfit-style data.
+- **Format simplicity.** No new on-disk format to version or maintain. The
+  hat checkpoint stays the single shareable artifact, exactly as specified in
+  [hat-checkpoint-format.md](hat-checkpoint-format.md).
+- **Pickle-safety.** Avoids introducing a `torch.save`/pickle surface for
+  optimizer state — keeping resume artifacts safe to share without the
+  pickle-deserialization caveat the checkpoint format was designed to avoid.
+
+Faithful-continuation resume (option B: optimizer + scheduler + RNG state in a
+sibling `trainer_state.pt`) is **deferred**. Revisit only when a use case
+demands bit-exact resume — long pre-training runs, paper reproducibility, or a
+scheduler whose mid-run position matters (e.g. warmup-cosine across millions of
+steps).
+
+### Surface
+
+- **Python API.** `TrainConfig.resume_from: str | None = None` — path to a hat
+  checkpoint directory. `train_thinker` calls `model.load_hats(resume_from)`
+  before freezing/optimizer setup. `TrainResult.steps` reflects this run only.
+- **CLI (`hh train-thinker`, #12).** `--resume-from PATH` maps 1:1 onto
+  `TrainConfig.resume_from`.
 
 ## Sequencing
 
